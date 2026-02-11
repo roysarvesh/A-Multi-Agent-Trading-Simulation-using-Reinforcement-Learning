@@ -1,0 +1,17 @@
+streamlit
+pandas
+numpy
+plotly
+matplotlib
+seaborn
+yfinance
+ta
+scikit-learn
+gymnasium
+pettingzoo
+stable-baselines3
+torch
+torchaudio
+torchvision
+openpyxl
+xlrd
