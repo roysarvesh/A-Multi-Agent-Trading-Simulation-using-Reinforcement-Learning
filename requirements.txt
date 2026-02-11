@@ -1,0 +1,15 @@
+streamlit==1.54.0
+plotly
+pandas
+numpy
+matplotlib
+seaborn
+yfinance
+ta
+scikit-learn
+gymnasium
+pettingzoo
+stable-baselines3
+torch
+openpyxl
+xlrd
