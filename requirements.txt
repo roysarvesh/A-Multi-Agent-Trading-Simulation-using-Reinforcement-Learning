@@ -14,3 +14,5 @@ torch
 openpyxl
 xlrd
 xlsxwriter
+websocket-client
+asyncio
