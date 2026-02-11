@@ -13,3 +13,4 @@ stable-baselines3
 torch
 openpyxl
 xlrd
+xlsxwriter
