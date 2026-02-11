@@ -1,5 +1,5 @@
 
-# 📘 **README.md — AI Multi-Agent Reinforcement Learning Trading System**
+# 📘 **AI Multi-Agent Reinforcement Learning Trading System**
 
 ```markdown
 # 🤖📈 AI Multi-Agent Reinforcement Learning Trading System  
