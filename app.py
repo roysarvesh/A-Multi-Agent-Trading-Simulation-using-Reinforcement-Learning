@@ -33,7 +33,7 @@ st.set_page_config(
 )
 
 # ==================================================
-# GLOBAL THEME
+# THEME
 # ==================================================
 st.markdown("""
 <style>
@@ -41,7 +41,6 @@ html, body { background: #0a0f14 !important; }
 [data-testid="stAppViewContainer"] {
     background: linear-gradient(135deg, #0a0f14 0%, #111821 80%);
     color: #cccccc;
-    font-family: 'Inter', sans-serif;
 }
 .metric-card {
     background: rgba(255,255,255,0.06);
@@ -95,12 +94,13 @@ for a in AGENTS:
         st.warning(f"⚠ Model not found: {model_path}")
 
 if selected_agent not in MODELS:
+    st.error("Selected agent model not found.")
     st.stop()
 
 model = MODELS[selected_agent]
 
 # ==================================================
-# EVALUATE AGENT
+# EVALUATE SELECTED AGENT
 # ==================================================
 portfolio_values, metrics, buy_points, sell_points = evaluate_agent_detailed(
     model, selected_agent, df
@@ -135,7 +135,7 @@ for col, title, val in zip(cols, metric_titles, metric_vals):
     """, unsafe_allow_html=True)
 
 # ==================================================
-# CANDLESTICK
+# CANDLESTICK CHART
 # ==================================================
 st.markdown("### 🕯️ Price Chart with Signals")
 
@@ -156,7 +156,7 @@ if buy_points:
         x=df.index[list(x_b)],
         y=y_b,
         mode="markers",
-        marker=dict(color="lime", size=10, symbol="triangle-up"),
+        marker=dict(color="lime", size=8),
         name="BUY"
     ))
 
@@ -166,7 +166,7 @@ if sell_points:
         x=df.index[list(x_s)],
         y=y_s,
         mode="markers",
-        marker=dict(color="red", size=10, symbol="triangle-down"),
+        marker=dict(color="red", size=8),
         name="SELL"
     ))
 
@@ -174,7 +174,7 @@ fig.update_layout(template="plotly_dark", height=600)
 st.plotly_chart(fig, use_container_width=True)
 
 # ==================================================
-# TRADING JOURNAL EXPORT
+# TRADING JOURNAL EXPORT (NO XLSXWRITER DEPENDENCY)
 # ==================================================
 st.markdown("### 📘 Trading Journal")
 
@@ -190,11 +190,6 @@ if trades:
     csv = trade_df.to_csv(index=False).encode()
     st.download_button("Download CSV", csv, f"{selected_agent}_journal.csv")
 
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        trade_df.to_excel(writer, index=False)
-    st.download_button("Download Excel", buffer.getvalue(), f"{selected_agent}_journal.xlsx")
-
 # ==================================================
 # RISK METRICS
 # ==================================================
@@ -209,12 +204,13 @@ if show_risk:
     st.error(f"CVaR(95%): {CVaR:.4f}")
 
 # ==================================================
-# AGENT HEATMAP
+# AGENT CORRELATION HEATMAP
 # ==================================================
-if show_heatmap:
+if show_heatmap and MODELS:
     st.markdown("### 🔥 Agent Correlation")
 
-    battle = multi_agent_battle(df)
+    battle = multi_agent_battle(df, MODELS)
+
     min_len = min(len(v) for v in battle.values())
     df_corr = pd.DataFrame({a: battle[a][:min_len] for a in battle})
 
@@ -225,10 +221,11 @@ if show_heatmap:
 # ==================================================
 # MULTI-AGENT BATTLE
 # ==================================================
-if show_battle:
+if show_battle and MODELS:
     st.markdown("### ⚔ Multi-Agent Battle")
 
-    battle_hist = multi_agent_battle(df)
+    battle_hist = multi_agent_battle(df, MODELS)
+
     fig_b = go.Figure()
 
     for agent, curve in battle_hist.items():
@@ -259,6 +256,7 @@ if show_slider_replay:
         y=portfolio_values[:step],
         name="Portfolio"
     ))
+
     fig_r.update_layout(template="plotly_dark")
     st.plotly_chart(fig_r, use_container_width=True)
 
@@ -311,7 +309,6 @@ if show_forecast:
         seq = np.vstack([seq[1:], pred])
 
     forecast = scaler.inverse_transform(np.array(preds).reshape(-1,1))
-
     future_dates = pd.date_range(df.index[-1], periods=31, freq="D")[1:]
 
     fig_fc = go.Figure()
