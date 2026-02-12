@@ -4,21 +4,15 @@ import numpy as np
 import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
-import time
 import torch
 import torch.nn as nn
 import os
-import io
 
 from sklearn.preprocessing import MinMaxScaler
 from stable_baselines3 import PPO
 
-# ==================================================
-# IMPORT CUSTOM FUNCTIONS
-# ==================================================
 from your_functions import (
     get_market_data,
-    SingleAgentWrapper,
     evaluate_agent_detailed,
     multi_agent_battle
 )
@@ -29,56 +23,41 @@ from your_functions import (
 st.set_page_config(
     page_title="AI Multi-Agent Trading Dashboard",
     layout="wide",
-    initial_sidebar_state="expanded"
 )
-
-# ==================================================
-# THEME
-# ==================================================
-st.markdown("""
-<style>
-html, body { background: #0a0f14 !important; }
-[data-testid="stAppViewContainer"] {
-    background: linear-gradient(135deg, #0a0f14 0%, #111821 80%);
-    color: #cccccc;
-}
-.metric-card {
-    background: rgba(255,255,255,0.06);
-    padding: 18px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,0.08);
-}
-.metric-title { font-size: 11px; opacity: 0.7; text-transform: uppercase; }
-.metric-value { font-size: 24px; font-weight: 700; color: white; }
-</style>
-""", unsafe_allow_html=True)
 
 # ==================================================
 # SIDEBAR
 # ==================================================
-st.sidebar.title("⚙️ Dashboard Controls")
+st.sidebar.title("⚙ Dashboard Controls")
 
-asset = st.sidebar.selectbox("Select Asset", ["AAPL", "TSLA", "BTC-USD"])
+asset = st.sidebar.selectbox(
+    "Select Asset",
+    ["AAPL", "TSLA", "BTC-USD"]
+)
+
 selected_agent = st.sidebar.selectbox(
     "Select Agent",
     ["conservative", "aggressive", "momentum", "mean_reversion"]
 )
 
-show_battle = st.sidebar.checkbox("Multi-Agent Battle Mode")
-show_animation = st.sidebar.checkbox("Auto Replay Animation")
-show_slider_replay = st.sidebar.checkbox("Replay Slider")
+show_battle = st.sidebar.checkbox("Multi-Agent Battle")
 show_heatmap = st.sidebar.checkbox("Agent Correlation Heatmap")
-show_risk = st.sidebar.checkbox("Risk Heatmaps")
-show_forecast = st.sidebar.checkbox("Enable LSTM Forecast")
+show_risk = st.sidebar.checkbox("Risk Metrics")
+show_forecast = st.sidebar.checkbox("LSTM Forecast")
 
 # ==================================================
-# LOAD DATA
+# LOAD DATA (SAFE)
 # ==================================================
 @st.cache_data
 def load_data(asset):
-    return get_market_data(asset, "2020-01-01", "2024-01-01")
+    df = get_market_data(asset, "2020-01-01", "2024-01-01")
+    return df
 
 df = load_data(asset)
+
+if df is None or df.empty:
+    st.error("❌ Failed to load market data. Try switching asset.")
+    st.stop()
 
 # ==================================================
 # LOAD MODELS SAFELY
@@ -90,54 +69,78 @@ for a in AGENTS:
     model_path = f"models/{a}_ppo_model.zip"
     if os.path.exists(model_path):
         MODELS[a] = PPO.load(model_path)
-    else:
-        st.warning(f"⚠ Model not found: {model_path}")
 
 if selected_agent not in MODELS:
-    st.error("Selected agent model not found.")
+    st.error("Model not found.")
     st.stop()
 
 model = MODELS[selected_agent]
 
 # ==================================================
-# EVALUATE SELECTED AGENT
+# HEADER
+# ==================================================
+st.title(f"🤖 Multi-Agent RL Trading Dashboard — {asset}")
+
+# ==================================================
+# MANUAL TRADING CONTROLS (NEW FEATURE)
+# ==================================================
+st.subheader("💰 Manual Asset Trading")
+
+if "manual_balance" not in st.session_state:
+    st.session_state.manual_balance = 10000
+    st.session_state.manual_holdings = 0
+
+current_price = df.iloc[-1]["Close"]
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Current Price", f"${current_price:.2f}")
+col2.metric("Balance", f"${st.session_state.manual_balance:.2f}")
+col3.metric("Holdings", st.session_state.manual_holdings)
+
+buy_col, sell_col = st.columns(2)
+
+if buy_col.button("🟢 Buy 1 Unit"):
+    if st.session_state.manual_balance >= current_price:
+        st.session_state.manual_balance -= current_price
+        st.session_state.manual_holdings += 1
+
+if sell_col.button("🔴 Sell 1 Unit"):
+    if st.session_state.manual_holdings > 0:
+        st.session_state.manual_balance += current_price
+        st.session_state.manual_holdings -= 1
+
+manual_value = (
+    st.session_state.manual_balance +
+    st.session_state.manual_holdings * current_price
+)
+
+st.success(f"📊 Total Portfolio Value: ${manual_value:.2f}")
+
+# ==================================================
+# EVALUATE RL AGENT
 # ==================================================
 portfolio_values, metrics, buy_points, sell_points = evaluate_agent_detailed(
     model, selected_agent, df
 )
 
 # ==================================================
-# HEADER
-# ==================================================
-st.markdown(f"# 🤖 Multi-Agent RL Trading Dashboard — {asset}")
-
-# ==================================================
 # METRICS
 # ==================================================
-st.markdown("### 📊 Performance Metrics")
+st.subheader("📊 RL Agent Performance")
 
-cols = st.columns(5)
-metric_titles = ["Final Value", "Sharpe", "Max DD", "Volatility", "Win Rate"]
-metric_vals = [
-    metrics["Final Value"],
-    metrics["Sharpe Ratio"],
-    metrics["Max Drawdown"],
-    metrics["Volatility"],
-    metrics["Win Rate"]
-]
+col1, col2, col3, col4, col5 = st.columns(5)
 
-for col, title, val in zip(cols, metric_titles, metric_vals):
-    col.markdown(f"""
-    <div class='metric-card'>
-        <div class='metric-title'>{title}</div>
-        <div class='metric-value'>{val:.4f}</div>
-    </div>
-    """, unsafe_allow_html=True)
+col1.metric("Final Value", f"${metrics['Final Value']:.2f}")
+col2.metric("Sharpe", f"{metrics['Sharpe Ratio']:.3f}")
+col3.metric("Max DD", f"{metrics['Max Drawdown']:.3f}")
+col4.metric("Volatility", f"{metrics['Volatility']:.3f}")
+col5.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
 
 # ==================================================
-# CANDLESTICK CHART
+# PRICE CHART
 # ==================================================
-st.markdown("### 🕯️ Price Chart with Signals")
+st.subheader("📈 Price Chart + Agent Trades")
 
 fig = go.Figure()
 
@@ -170,59 +173,27 @@ if sell_points:
         name="SELL"
     ))
 
-fig.update_layout(template="plotly_dark", height=600)
+fig.update_layout(template="plotly_dark", height=550)
 st.plotly_chart(fig, use_container_width=True)
-
-# ==================================================
-# TRADING JOURNAL EXPORT (NO XLSXWRITER DEPENDENCY)
-# ==================================================
-st.markdown("### 📘 Trading Journal")
-
-trades = buy_points + sell_points
-
-if trades:
-    trade_df = pd.DataFrame({
-        "Step": [t[0] for t in trades],
-        "Price": [t[1] for t in trades],
-        "Type": ["BUY"] * len(buy_points) + ["SELL"] * len(sell_points)
-    })
-
-    csv = trade_df.to_csv(index=False).encode()
-    st.download_button("Download CSV", csv, f"{selected_agent}_journal.csv")
 
 # ==================================================
 # RISK METRICS
 # ==================================================
 if show_risk:
-    st.markdown("### ⚠ Risk Analysis")
+    st.subheader("⚠ Risk Metrics")
 
     returns = np.diff(portfolio_values)
     VaR = np.percentile(returns, 5)
     CVaR = returns[returns < VaR].mean()
 
-    st.warning(f"VaR(95%): {VaR:.4f}")
-    st.error(f"CVaR(95%): {CVaR:.4f}")
+    st.warning(f"VaR (95%): {VaR:.4f}")
+    st.error(f"CVaR (95%): {CVaR:.4f}")
 
 # ==================================================
-# AGENT CORRELATION HEATMAP
+# MULTI AGENT BATTLE
 # ==================================================
-if show_heatmap and MODELS:
-    st.markdown("### 🔥 Agent Correlation")
-
-    battle = multi_agent_battle(df, MODELS)
-
-    min_len = min(len(v) for v in battle.values())
-    df_corr = pd.DataFrame({a: battle[a][:min_len] for a in battle})
-
-    fig_h, ax = plt.subplots()
-    sns.heatmap(df_corr.corr(), annot=True, cmap="coolwarm", ax=ax)
-    st.pyplot(fig_h)
-
-# ==================================================
-# MULTI-AGENT BATTLE
-# ==================================================
-if show_battle and MODELS:
-    st.markdown("### ⚔ Multi-Agent Battle")
+if show_battle:
+    st.subheader("⚔ Multi-Agent Battle")
 
     battle_hist = multi_agent_battle(df, MODELS)
 
@@ -240,31 +211,25 @@ if show_battle and MODELS:
     st.plotly_chart(fig_b, use_container_width=True)
 
 # ==================================================
-# REPLAY SLIDER
+# HEATMAP
 # ==================================================
-if show_slider_replay:
-    step = st.slider("Replay Step", 30, len(portfolio_values)-1, 100)
+if show_heatmap:
+    st.subheader("🔥 Agent Correlation")
 
-    fig_r = go.Figure()
-    fig_r.add_trace(go.Scatter(
-        x=np.arange(step),
-        y=df["Close"][:step],
-        name="Market"
-    ))
-    fig_r.add_trace(go.Scatter(
-        x=np.arange(step),
-        y=portfolio_values[:step],
-        name="Portfolio"
-    ))
+    battle_hist = multi_agent_battle(df, MODELS)
 
-    fig_r.update_layout(template="plotly_dark")
-    st.plotly_chart(fig_r, use_container_width=True)
+    min_len = min(len(v) for v in battle_hist.values())
+    df_corr = pd.DataFrame({a: battle_hist[a][:min_len] for a in battle_hist})
+
+    fig_h, ax = plt.subplots()
+    sns.heatmap(df_corr.corr(), annot=True, cmap="coolwarm", ax=ax)
+    st.pyplot(fig_h)
 
 # ==================================================
 # LSTM FORECAST
 # ==================================================
 if show_forecast:
-    st.markdown("### 📈 LSTM Forecast (30 Days)")
+    st.subheader("📈 LSTM Forecast")
 
     prices = df["Close"].values.reshape(-1,1)
     scaler = MinMaxScaler()
@@ -277,6 +242,7 @@ if show_forecast:
             super().__init__()
             self.lstm = nn.LSTM(1, 32, batch_first=True)
             self.fc = nn.Linear(32,1)
+
         def forward(self,x):
             out,_ = self.lstm(x)
             return self.fc(out[:,-1,:])
@@ -289,6 +255,7 @@ if show_forecast:
     for i in range(window, len(scaled)):
         X.append(scaled[i-window:i])
         y.append(scaled[i])
+
     X = torch.tensor(np.array(X), dtype=torch.float32)
     y = torch.tensor(np.array(y), dtype=torch.float32)
 
@@ -315,10 +282,11 @@ if show_forecast:
     fig_fc.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Historical"))
     fig_fc.add_trace(go.Scatter(x=future_dates, y=forecast.flatten(), name="Forecast"))
     fig_fc.update_layout(template="plotly_dark")
+
     st.plotly_chart(fig_fc, use_container_width=True)
 
 # ==================================================
 # FOOTER
 # ==================================================
 st.markdown("---")
-st.markdown("Made with ❤️ by Sarvesh — RL + PPO + LSTM + Streamlit")
+st.markdown("Made with ❤️ by Sarvesh — Production Ready AI Trading Platform")
