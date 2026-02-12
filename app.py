@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import os
-
+from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
 from stable_baselines3 import PPO
 
@@ -21,14 +21,35 @@ from your_functions import (
 # PAGE CONFIG
 # ==================================================
 st.set_page_config(
-    page_title="AI Multi-Agent Trading Dashboard",
+    page_title="AI Multi-Agent Trading Platform",
     layout="wide",
 )
 
 # ==================================================
-# SIDEBAR
+# DARK UI STYLING
 # ==================================================
-st.sidebar.title("⚙ Dashboard Controls")
+st.markdown("""
+<style>
+body {background-color: #0e1117;}
+.block-container {padding-top: 1rem;}
+</style>
+""", unsafe_allow_html=True)
+
+# ==================================================
+# HEADER (LOGO + BANNER)
+# ==================================================
+col_logo, col_banner = st.columns([1,5])
+with col_logo:
+    st.image("assets/logo.png", width=110)
+with col_banner:
+    st.image("assets/banner_dark.png")
+
+st.markdown("---")
+
+# ==================================================
+# SIDEBAR CONTROLS
+# ==================================================
+st.sidebar.title("⚙ Trading Controls")
 
 asset = st.sidebar.selectbox(
     "Select Asset",
@@ -40,35 +61,41 @@ selected_agent = st.sidebar.selectbox(
     ["conservative", "aggressive", "momentum", "mean_reversion"]
 )
 
+paper_trading = st.sidebar.toggle("🧪 Paper Trading Mode", value=True)
+risk_per_trade = st.sidebar.slider("Risk % per Trade", 1, 10, 5)
+daily_loss_limit = st.sidebar.slider("Max Daily Loss %", 1, 5, 2)
+
+st.sidebar.markdown("---")
 show_battle = st.sidebar.checkbox("Multi-Agent Battle")
 show_heatmap = st.sidebar.checkbox("Agent Correlation Heatmap")
 show_risk = st.sidebar.checkbox("Risk Metrics")
 show_forecast = st.sidebar.checkbox("LSTM Forecast")
 
 # ==================================================
-# LOAD DATA (SAFE)
+# LOAD DATA
 # ==================================================
 @st.cache_data
 def load_data(asset):
-    df = get_market_data(asset, "2020-01-01", "2024-01-01")
-    return df
+    return get_market_data(asset, "2020-01-01", "2024-01-01")
 
 df = load_data(asset)
 
 if df is None or df.empty:
-    st.error("❌ Failed to load market data. Try switching asset.")
+    st.error("Market data unavailable.")
     st.stop()
 
+current_price = df.iloc[-1]["Close"]
+
 # ==================================================
-# LOAD MODELS SAFELY
+# LOAD MODELS
 # ==================================================
 AGENTS = ["conservative", "aggressive", "momentum", "mean_reversion"]
 MODELS = {}
 
-for a in AGENTS:
-    model_path = f"models/{a}_ppo_model.zip"
-    if os.path.exists(model_path):
-        MODELS[a] = PPO.load(model_path)
+for agent in AGENTS:
+    path = f"models/{agent}_ppo_model.zip"
+    if os.path.exists(path):
+        MODELS[agent] = PPO.load(path)
 
 if selected_agent not in MODELS:
     st.error("Model not found.")
@@ -77,70 +104,112 @@ if selected_agent not in MODELS:
 model = MODELS[selected_agent]
 
 # ==================================================
-# HEADER
+# SESSION STATE
 # ==================================================
-st.title(f"🤖 Multi-Agent RL Trading Dashboard — {asset}")
+if "balance" not in st.session_state:
+    st.session_state.balance = 10000
+    st.session_state.holdings = 0
+    st.session_state.entry_price = None
+    st.session_state.daily_pnl = 0
+    st.session_state.last_trade_day = datetime.now().date()
+
+today = datetime.now().date()
+if today != st.session_state.last_trade_day:
+    st.session_state.daily_pnl = 0
+    st.session_state.last_trade_day = today
 
 # ==================================================
-# MANUAL TRADING CONTROLS (NEW FEATURE)
+# SOUND FUNCTION
 # ==================================================
-st.subheader("💰 Manual Asset Trading")
+def play_sound(path):
+    if os.path.exists(path):
+        audio_bytes = open(path, "rb").read()
+        st.audio(audio_bytes, format="audio/wav", autoplay=True)
 
-if "manual_balance" not in st.session_state:
-    st.session_state.manual_balance = 10000
-    st.session_state.manual_holdings = 0
+# ==================================================
+# RISK ENGINE
+# ==================================================
+def can_trade():
+    max_loss_allowed = -(daily_loss_limit / 100) * 10000
+    return st.session_state.daily_pnl > max_loss_allowed
 
-current_price = df.iloc[-1]["Close"]
+def position_size():
+    allocation = (risk_per_trade / 100) * st.session_state.balance
+    units = int(allocation / current_price)
+    return max(units, 0)
+
+def execute_buy():
+    units = position_size()
+    cost = units * current_price
+    if units > 0 and st.session_state.balance >= cost:
+        st.session_state.balance -= cost
+        st.session_state.holdings += units
+        st.session_state.entry_price = current_price
+        play_sound("assets/buy_alert.wav")
+
+def execute_sell():
+    if st.session_state.holdings > 0:
+        revenue = st.session_state.holdings * current_price
+        pnl = (current_price - st.session_state.entry_price) * st.session_state.holdings
+        st.session_state.daily_pnl += pnl
+        st.session_state.balance += revenue
+        st.session_state.holdings = 0
+        st.session_state.entry_price = None
+        play_sound("assets/sell_alert.wav")
+
+def stop_loss_check():
+    if st.session_state.holdings > 0:
+        if current_price < st.session_state.entry_price * 0.98:
+            execute_sell()
+            st.warning("⚠ Stop Loss Triggered")
+
+# ==================================================
+# MAIN DASHBOARD
+# ==================================================
+st.title(f"🤖 AI Multi-Agent Trading — {asset}")
 
 col1, col2, col3 = st.columns(3)
+col1.metric("Balance", f"${st.session_state.balance:.2f}")
+col2.metric("Holdings", st.session_state.holdings)
+col3.metric("Current Price", f"${current_price:.2f}")
 
-col1.metric("Current Price", f"${current_price:.2f}")
-col2.metric("Balance", f"${st.session_state.manual_balance:.2f}")
-col3.metric("Holdings", st.session_state.manual_holdings)
+col_buy, col_sell = st.columns(2)
 
-buy_col, sell_col = st.columns(2)
+if col_buy.button("🟢 BUY"):
+    if can_trade():
+        execute_buy()
 
-if buy_col.button("🟢 Buy 1 Unit"):
-    if st.session_state.manual_balance >= current_price:
-        st.session_state.manual_balance -= current_price
-        st.session_state.manual_holdings += 1
+if col_sell.button("🔴 SELL"):
+    execute_sell()
 
-if sell_col.button("🔴 Sell 1 Unit"):
-    if st.session_state.manual_holdings > 0:
-        st.session_state.manual_balance += current_price
-        st.session_state.manual_holdings -= 1
+stop_loss_check()
 
-manual_value = (
-    st.session_state.manual_balance +
-    st.session_state.manual_holdings * current_price
-)
+portfolio_value = st.session_state.balance + \
+    st.session_state.holdings * current_price
 
-st.success(f"📊 Total Portfolio Value: ${manual_value:.2f}")
+st.success(f"💼 Portfolio Value: ${portfolio_value:.2f}")
+st.info(f"📉 Daily PnL: ${st.session_state.daily_pnl:.2f}")
 
 # ==================================================
-# EVALUATE RL AGENT
+# RL BACKTEST EVALUATION
 # ==================================================
 portfolio_values, metrics, buy_points, sell_points = evaluate_agent_detailed(
     model, selected_agent, df
 )
 
-# ==================================================
-# METRICS
-# ==================================================
 st.subheader("📊 RL Agent Performance")
 
-col1, col2, col3, col4, col5 = st.columns(5)
-
-col1.metric("Final Value", f"${metrics['Final Value']:.2f}")
-col2.metric("Sharpe", f"{metrics['Sharpe Ratio']:.3f}")
-col3.metric("Max DD", f"{metrics['Max Drawdown']:.3f}")
-col4.metric("Volatility", f"{metrics['Volatility']:.3f}")
-col5.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Final Value", f"${metrics['Final Value']:.2f}")
+m2.metric("Sharpe", f"{metrics['Sharpe Ratio']:.3f}")
+m3.metric("Max DD", f"{metrics['Max Drawdown']:.3f}")
+m4.metric("Volatility", f"{metrics['Volatility']:.3f}")
+m5.metric("Win Rate", f"{metrics['Win Rate']:.2%}")
 
 # ==================================================
 # PRICE CHART
 # ==================================================
-st.subheader("📈 Price Chart + Agent Trades")
+st.subheader("📈 Price Chart + Trades")
 
 fig = go.Figure()
 
@@ -181,11 +250,9 @@ st.plotly_chart(fig, use_container_width=True)
 # ==================================================
 if show_risk:
     st.subheader("⚠ Risk Metrics")
-
     returns = np.diff(portfolio_values)
     VaR = np.percentile(returns, 5)
     CVaR = returns[returns < VaR].mean()
-
     st.warning(f"VaR (95%): {VaR:.4f}")
     st.error(f"CVaR (95%): {CVaR:.4f}")
 
@@ -194,11 +261,8 @@ if show_risk:
 # ==================================================
 if show_battle:
     st.subheader("⚔ Multi-Agent Battle")
-
     battle_hist = multi_agent_battle(df, MODELS)
-
     fig_b = go.Figure()
-
     for agent, curve in battle_hist.items():
         fig_b.add_trace(go.Scatter(
             x=np.arange(len(curve)),
@@ -206,7 +270,6 @@ if show_battle:
             mode="lines",
             name=agent
         ))
-
     fig_b.update_layout(template="plotly_dark")
     st.plotly_chart(fig_b, use_container_width=True)
 
@@ -215,12 +278,9 @@ if show_battle:
 # ==================================================
 if show_heatmap:
     st.subheader("🔥 Agent Correlation")
-
     battle_hist = multi_agent_battle(df, MODELS)
-
     min_len = min(len(v) for v in battle_hist.values())
     df_corr = pd.DataFrame({a: battle_hist[a][:min_len] for a in battle_hist})
-
     fig_h, ax = plt.subplots()
     sns.heatmap(df_corr.corr(), annot=True, cmap="coolwarm", ax=ax)
     st.pyplot(fig_h)
@@ -282,11 +342,10 @@ if show_forecast:
     fig_fc.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Historical"))
     fig_fc.add_trace(go.Scatter(x=future_dates, y=forecast.flatten(), name="Forecast"))
     fig_fc.update_layout(template="plotly_dark")
-
     st.plotly_chart(fig_fc, use_container_width=True)
 
 # ==================================================
 # FOOTER
 # ==================================================
 st.markdown("---")
-st.markdown("Made with ❤️ by Sarvesh — Production Ready AI Trading Platform")
+st.markdown("Made with ❤️ by Sarvesh — Enterprise AI Trading Platform")
